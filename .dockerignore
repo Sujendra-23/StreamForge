@@ -1,0 +1,11 @@
+node_modules
+web/dist
+media-engine/build
+bin
+.git
+.claude
+.rocketride
+test-results
+playwright-report
+.env
+benchmarks/results

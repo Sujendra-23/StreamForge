@@ -1,0 +1,14 @@
+node_modules/
+web/dist/
+media-engine/build/
+test-results/
+playwright-report/
+.env
+*.log
+.DS_Store
+bin/
+benchmarks/results/
+
+# Local assistant tooling and machine-specific state
+.claude/
+.rocketride/

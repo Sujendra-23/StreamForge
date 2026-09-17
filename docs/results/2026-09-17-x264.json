@@ -1,0 +1,44 @@
+{
+  "measured_at": "2026-09-17T19:29:12.695494+00:00",
+  "platform": "darwin",
+  "gst_version": "gst-launch-1.0 version 1.28.7\nGStreamer 1.28.7\nhttps://github.com/Homebrew/homebrew-core",
+  "note": "Offline pipeline throughput including startup, not per-frame encoding latency. Test pattern: SMPTE. Compare encoders with identical frame counts, sources, and presets.",
+  "results": [
+    {
+      "encoder": "x264",
+      "width": 1280,
+      "height": 720,
+      "source_fps": 30,
+      "frames": 90,
+      "wall_seconds": 0.455,
+      "throughput_fps": 197.65,
+      "cpu_seconds": 0.566,
+      "output_bytes": 2048674,
+      "output_bitrate_mbps": 5.463
+    },
+    {
+      "encoder": "x264",
+      "width": 1920,
+      "height": 1080,
+      "source_fps": 30,
+      "frames": 90,
+      "wall_seconds": 0.406,
+      "throughput_fps": 221.75,
+      "cpu_seconds": 1.055,
+      "output_bytes": 2035143,
+      "output_bitrate_mbps": 5.427
+    },
+    {
+      "encoder": "x264",
+      "width": 1920,
+      "height": 1080,
+      "source_fps": 60,
+      "frames": 90,
+      "wall_seconds": 0.376,
+      "throughput_fps": 239.63,
+      "cpu_seconds": 0.987,
+      "output_bytes": 980597,
+      "output_bitrate_mbps": 5.23
+    }
+  ]
+}
