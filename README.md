@@ -107,7 +107,7 @@ sudo apt-get install cmake pkg-config libgstreamer1.0-dev \
   libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev \
   libsoup-3.0-dev libjson-glib-dev \
   gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
-  gstreamer1.0-plugins-ugly gstreamer1.0-nice
+  gstreamer1.0-plugins-ugly gstreamer1.0-nice gstreamer1.0-tools
 npm run build:native
 npm run native -- --test --room native-demo
 ```
