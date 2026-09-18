@@ -35,7 +35,8 @@ export function Viewer({ id }: { id: string }) {
       },
       onTrack: setStream,
     });
-    conn.connect("subscribe", id, "").catch((e) => {
+    const token = decodeURIComponent(location.hash.slice(1));
+    conn.connect("subscribe", id, "", undefined, "H264", token).catch((e) => {
       if (!disposed) {
         setError(e.message);
         setState("failed");

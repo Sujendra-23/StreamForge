@@ -51,7 +51,7 @@ export function StudioPage({
   const share = async () => {
     try {
       await navigator.clipboard.writeText(
-        `${location.origin}/watch/${s.roomId}`,
+        `${location.origin}/watch/${s.roomId}${s.viewerToken ? `#${encodeURIComponent(s.viewerToken)}` : ""}`,
       );
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -493,7 +493,7 @@ export function StudioPage({
               </button>
               {s.live && (
                 <a
-                  href={`/watch/${s.roomId}`}
+                  href={`/watch/${s.roomId}${s.viewerToken ? `#${encodeURIComponent(s.viewerToken)}` : ""}`}
                   target="_blank"
                   rel="noreferrer"
                   className="icon-button"

@@ -1,10 +1,11 @@
 import { EMPTY_METRICS, type Metrics, type Network, type Room } from "./types";
+import { operatorToken } from "./auth";
 export type Callbacks = {
   onState: (state: string) => void;
   onRoom: (room: Room) => void;
   onError: (message: string) => void;
   onTrack?: (stream: MediaStream) => void;
-  onReady?: (id: string) => void;
+  onReady?: (id: string, viewerToken: string) => void;
   onNetwork?: (network: Network) => void;
 };
 export class StreamConnection {
@@ -33,12 +34,18 @@ export class StreamConnection {
     title: string,
     stream?: MediaStream,
     codec = "H264",
+    accessToken = "",
   ) {
     const res = await fetch("/api/config", {
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) throw new Error("Signaling server unavailable");
     const config = await res.json();
+    const token = role === "publish" ? operatorToken() : accessToken;
+    if (role === "publish" && config.authRequired && !token)
+      throw new Error(
+        "This server requires an operator token. Save it in Settings before going live.",
+      );
     if (this.closed) return;
     this.pc = new RTCPeerConnection({ iceServers: config.iceServers });
     const pc = this.pc;
@@ -96,6 +103,7 @@ export class StreamConnection {
         roomId,
         title,
         tracks: stream?.getTracks().length ?? 0,
+        token,
       });
     ws.onerror = () =>
       this.callbacks.onError(
@@ -115,7 +123,7 @@ export class StreamConnection {
           const msg = JSON.parse(e.data);
           switch (msg.type) {
             case "ready":
-              this.callbacks.onReady?.(msg.roomId);
+              this.callbacks.onReady?.(msg.roomId, msg.viewerToken ?? "");
               await pc.setLocalDescription(await pc.createOffer());
               this.send({ type: "offer", sdp: pc.localDescription });
               break;

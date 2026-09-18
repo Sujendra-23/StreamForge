@@ -24,7 +24,8 @@ export function useStudio() {
   const [status, setStatus] = useState("idle"),
     [stream, setStream] = useState<MediaStream | null>(null),
     [room, setRoom] = useState<Room | null>(null),
-    [roomId, setRoomId] = useState("");
+    [roomId, setRoomId] = useState(""),
+    [viewerToken, setViewerToken] = useState("");
   const [metrics, setMetrics] = useState<Metrics>(EMPTY_METRICS),
     [history, setHistory] = useState<Metrics[]>([]),
     [network, setNetwork] = useState<Network>(HEALTHY),
@@ -66,6 +67,7 @@ export function useStudio() {
     release();
     setStatus("idle");
     setRoom(null);
+    setViewerToken("");
     setNetwork(HEALTHY);
     log("Stream ended. All media tracks released.");
   }, [release, log]);
@@ -161,8 +163,9 @@ export function useStudio() {
           }
         },
         onRoom: setRoom,
-        onReady: (id) => {
+        onReady: (id, token) => {
           setRoomId(id);
+          setViewerToken(token);
           log(`Signaling ready · ${id}`);
         },
         onNetwork: (n) => {
@@ -291,6 +294,7 @@ export function useStudio() {
     stream,
     room,
     roomId,
+    viewerToken,
     metrics,
     history,
     network,

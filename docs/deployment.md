@@ -2,9 +2,9 @@
 
 ## Local development model
 
-The default server binds only to `127.0.0.1`. Rooms are ephemeral. There are no accounts or persistent stream records. Room IDs are viewer capabilities, and `/api/rooms` deliberately lists all active broadcasts. Only the socket that created a room can send its network commands. Origin validation prevents an arbitrary browser origin from opening an accepted WebSocket, but it is not authentication for non-browser clients.
+The default server binds only to `127.0.0.1`. Active rooms are ephemeral. Set `STREAMFORGE_AUTH_SECRET` to require an operator token for publishing and management APIs and to issue signed, room-instance-specific viewer links. Set `STREAMFORGE_HISTORY_PATH` to append completed session summaries to JSONL and restore them after restart. Docker Compose enables history persistence automatically. Only the socket that created a room can send its network commands.
 
-Do not expose this development service directly as a public multi-tenant product. That requires authentication, authorization, rate limits, trusted telemetry, TLS termination, and persistence. The current room cap is 32, with up to 100 viewer reservations per room; these are limits, not tested capacity guarantees. The local ten-viewer test is functional verification, not a production load benchmark.
+The optional token protects a single operator and its viewer capabilities; it is not an account system or tenant-role model. A public multi-tenant service still requires user identity, per-resource authorization, rate limits, trusted telemetry, TLS termination, a shared database, secret rotation, and audit policy. The current room cap is 32, with up to 100 viewer reservations per room; these are limits, not capacity guarantees.
 
 ## Environment
 
@@ -18,11 +18,15 @@ Do not expose this development service directly as a public multi-tenant product
 | `TURN_SECRET` | Shared HMAC secret with coturn; never sent to the client |
 | `RTC_PUBLIC_IP` | Optional public address advertised for SFU host candidates |
 | `RTC_UDP_MIN/MAX` | Optional UDP range, e.g. 50000–50050 |
+| `STREAMFORGE_AUTH_SECRET` | Optional operator secret used for publisher/API authorization and HMAC-signed viewer capabilities |
+| `STREAMFORGE_HISTORY_PATH` | Optional completed-session JSONL path; Compose uses `/data/history.jsonl` |
 | `GRAFANA_PASSWORD` | Compose-only local Grafana password |
 
 The frontend gets ICE servers from `/api/config`. TURN credentials are HMAC-SHA1 credentials expiring after one hour. A new connection obtains fresh credentials. A long-running TURN session may need reconnection after its credentials expire. Native sender ICE URIs are passed with `--stun` / `--turn` separately.
 
 The Go program reads exported environment variables. It does not implicitly load `.env`. Docker Compose reads `.env` for interpolation.
+
+When authentication is enabled, enter the operator secret in the dashboard's Settings page. It is held in browser session storage and sent as a bearer token to management APIs and as the initial publisher WebSocket credential. Native publishers read `STREAMFORGE_AUTH_SECRET` or use `--token`. Viewer URLs contain a room-scoped signed capability and never contain the operator secret.
 
 ## Docker
 

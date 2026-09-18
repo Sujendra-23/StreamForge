@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -33,13 +34,24 @@ type Config struct {
 	ICE            []webrtc.ICEServer
 	UDPMin, UDPMax uint16
 	PublicIP       string
+	AuthSecret     string
+	HistoryPath    string
 }
 type Server struct {
 	mu      sync.RWMutex
 	rooms   map[string]*sfu.Room
+	history []SessionRecord
 	api     *webrtc.API
 	config  Config
 	started time.Time
+}
+type SessionRecord struct {
+	sfu.Snapshot
+	EndedAt time.Time `json:"endedAt"`
+}
+type RoomView struct {
+	sfu.Snapshot
+	ViewerToken string `json:"viewerToken,omitempty"`
 }
 type message struct {
 	Tracks    int                        `json:"tracks,omitempty"`
@@ -51,6 +63,7 @@ type message struct {
 	Candidate *webrtc.ICECandidateInit   `json:"candidate,omitempty"`
 	Network   *sfu.Network               `json:"network,omitempty"`
 	Error     string                     `json:"error,omitempty"`
+	Token     string                     `json:"token,omitempty"`
 }
 
 var validID = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,48}$`)
@@ -65,7 +78,11 @@ func New(c Config) (*Server, error) {
 	if c.PublicIP != "" {
 		settings.SetNAT1To1IPs([]string{c.PublicIP}, webrtc.ICECandidateTypeHost)
 	}
-	return &Server{rooms: make(map[string]*sfu.Room), api: webrtc.NewAPI(webrtc.WithSettingEngine(settings)), config: c, started: time.Now()}, nil
+	s := &Server{rooms: make(map[string]*sfu.Room), api: webrtc.NewAPI(webrtc.WithSettingEngine(settings)), config: c, started: time.Now()}
+	if err := s.loadHistory(); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 func (s *Server) Close() {
 	s.mu.Lock()
@@ -81,10 +98,18 @@ func (s *Server) Handler() http.Handler {
 		jsonResponse(w, map[string]any{"status": "ok", "service": "streamforge", "version": "0.1.0"})
 	})
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
-		jsonResponse(w, map[string]any{"iceServers": s.iceServers(), "region": "local", "maxViewers": 100, "transport": "WebRTC / Pion SFU"})
+		jsonResponse(w, map[string]any{"iceServers": s.iceServers(), "region": "local", "maxViewers": 100, "transport": "WebRTC / Pion SFU", "authRequired": s.config.AuthSecret != "", "historyEnabled": s.config.HistoryPath != ""})
 	})
-	mux.HandleFunc("GET /api/rooms", func(w http.ResponseWriter, r *http.Request) { jsonResponse(w, s.snapshots()) })
+	mux.HandleFunc("GET /api/rooms", func(w http.ResponseWriter, r *http.Request) {
+		if !s.authorizeOperator(w, r) {
+			return
+		}
+		jsonResponse(w, s.snapshots())
+	})
 	mux.HandleFunc("GET /api/rooms/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !s.authorizeOperator(w, r) {
+			return
+		}
 		s.mu.RLock()
 		room := s.rooms[r.PathValue("id")]
 		s.mu.RUnlock()
@@ -92,7 +117,16 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "Stream is offline", 404)
 			return
 		}
-		jsonResponse(w, room.Snapshot())
+		jsonResponse(w, RoomView{Snapshot: room.Snapshot(), ViewerToken: s.viewerToken(room.ID, room.StartedAt)})
+	})
+	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) {
+		if !s.authorizeOperator(w, r) {
+			return
+		}
+		s.mu.RLock()
+		history := append([]SessionRecord(nil), s.history...)
+		s.mu.RUnlock()
+		jsonResponse(w, history)
 	})
 	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.HandleFunc("GET /ws", s.socket)
@@ -114,17 +148,92 @@ func (s *Server) Handler() http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
+
+func (s *Server) authorizeOperator(w http.ResponseWriter, r *http.Request) bool {
+	if s.config.AuthSecret == "" {
+		return true
+	}
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !hmac.Equal([]byte(token), []byte(s.config.AuthSecret)) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
+
+func (s *Server) viewerToken(roomID string, startedAt time.Time) string {
+	if s.config.AuthSecret == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(s.config.AuthSecret))
+	_, _ = mac.Write([]byte(fmt.Sprintf("viewer:%s:%d", roomID, startedAt.UnixNano())))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Server) loadHistory() error {
+	if s.config.HistoryPath == "" {
+		return nil
+	}
+	data, err := os.ReadFile(s.config.HistoryPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read history: %w", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var record SessionRecord
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			return fmt.Errorf("decode history: %w", err)
+		}
+		s.history = append(s.history, record)
+	}
+	return nil
+}
+
+func (s *Server) recordSession(snapshot sfu.Snapshot) {
+	if s.config.HistoryPath == "" {
+		return
+	}
+	record := SessionRecord{Snapshot: snapshot, EndedAt: time.Now().UTC()}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.history = append(s.history, record)
+	if len(s.history) > 1000 {
+		s.history = s.history[len(s.history)-1000:]
+	}
+	if err = os.MkdirAll(filepath.Dir(s.config.HistoryPath), 0700); err != nil {
+		log.Printf("create history directory: %v", err)
+		return
+	}
+	f, err := os.OpenFile(s.config.HistoryPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		log.Printf("open history: %v", err)
+		return
+	}
+	defer f.Close()
+	if _, err = f.Write(append(data, '\n')); err != nil {
+		log.Printf("write history: %v", err)
+	}
+}
 func jsonResponse(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(v)
 }
-func (s *Server) snapshots() []sfu.Snapshot {
+func (s *Server) snapshots() []RoomView {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	a := make([]sfu.Snapshot, 0, len(s.rooms))
+	a := make([]RoomView, 0, len(s.rooms))
 	for _, r := range s.rooms {
-		a = append(a, r.Snapshot())
+		a = append(a, RoomView{Snapshot: r.Snapshot(), ViewerToken: s.viewerToken(r.ID, r.StartedAt)})
 	}
 	sort.Slice(a, func(i, j int) bool { return a[i].StartedAt.Before(a[j].StartedAt) })
 	return a
@@ -198,6 +307,10 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 	var room *sfu.Room
 	publisher := first.Type == "publish"
 	if publisher {
+		if s.config.AuthSecret != "" && !hmac.Equal([]byte(first.Token), []byte(s.config.AuthSecret)) {
+			fail("Publisher authentication failed")
+			return
+		}
 		title := strings.TrimSpace(first.Title)
 		if title == "" {
 			title = "Untitled stream"
@@ -218,7 +331,13 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		}
 		s.rooms[room.ID] = room
 		s.mu.Unlock()
-		defer func() { s.mu.Lock(); delete(s.rooms, room.ID); s.mu.Unlock(); room.Close() }()
+		defer func() {
+			s.mu.Lock()
+			delete(s.rooms, room.ID)
+			s.mu.Unlock()
+			s.recordSession(room.Snapshot())
+			room.Close()
+		}()
 		pc.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) { room.Receive(t) })
 	} else {
 		s.mu.RLock()
@@ -226,6 +345,10 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		s.mu.RUnlock()
 		if room == nil {
 			fail("This stream is offline")
+			return
+		}
+		if s.config.AuthSecret != "" && !hmac.Equal([]byte(first.Token), []byte(s.viewerToken(first.RoomID, room.StartedAt))) {
+			fail("Viewer authentication failed")
 			return
 		}
 		deadline := time.NewTimer(8 * time.Second)
@@ -284,7 +407,11 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 			cancel()
 		}
 	})
-	if err = send(map[string]any{"type": "ready", "roomId": room.ID, "role": first.Type}); err != nil {
+	ready := map[string]any{"type": "ready", "roomId": room.ID, "role": first.Type}
+	if publisher && s.config.AuthSecret != "" {
+		ready["viewerToken"] = s.viewerToken(room.ID, room.StartedAt)
+	}
+	if err = send(ready); err != nil {
 		return
 	}
 	go func() {

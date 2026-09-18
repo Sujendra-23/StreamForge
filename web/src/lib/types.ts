@@ -19,6 +19,7 @@ export type Room = {
   receivedBytes: number;
   forwardedPackets: number;
   droppedPackets: number;
+  viewerToken?: string;
 };
 export type Metrics = {
   timestamp: number;

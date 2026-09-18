@@ -25,7 +25,7 @@ func main() {
 	if stun := os.Getenv("STUN_URL"); stun != "" {
 		ice = append(ice, webrtc.ICEServer{URLs: []string{stun}})
 	}
-	app, err := signaling.New(signaling.Config{Origins: strings.Split(env("ALLOWED_ORIGINS", "localhost:5173,127.0.0.1:5173,localhost:8080,127.0.0.1:8080"), ","), WebDir: env("WEB_DIR", "web/dist"), ICE: ice, UDPMin: min, UDPMax: max, PublicIP: os.Getenv("RTC_PUBLIC_IP")})
+	app, err := signaling.New(signaling.Config{Origins: strings.Split(env("ALLOWED_ORIGINS", "localhost:5173,127.0.0.1:5173,localhost:8080,127.0.0.1:8080"), ","), WebDir: env("WEB_DIR", "web/dist"), ICE: ice, UDPMin: min, UDPMax: max, PublicIP: os.Getenv("RTC_PUBLIC_IP"), AuthSecret: os.Getenv("STREAMFORGE_AUTH_SECRET"), HistoryPath: os.Getenv("STREAMFORGE_HISTORY_PATH")})
 	if err != nil {
 		log.Fatal(err)
 	}

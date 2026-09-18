@@ -5,6 +5,7 @@
 #include <json-glib/json-glib.h>
 #include <glib-unix.h>
 #include <atomic>
+#include <cstdlib>
 #include <csignal>
 #include <iostream>
 #include <stdexcept>
@@ -21,7 +22,7 @@ struct App {
   bool remote_set = false;
   std::atomic<int> exit_code{0};
   std::string room = "native-demo", title = "StreamForge native source";
-  std::string url = "ws://127.0.0.1:8080/ws", stun, turn;
+  std::string url = "ws://127.0.0.1:8080/ws", stun, turn, token;
   std::vector<std::pair<guint, std::string>> pending;
 };
 
@@ -91,7 +92,10 @@ static void incoming(SoupWebsocketConnection*, gint type, GBytes* bytes, gpointe
   if (!JSON_NODE_HOLDS_OBJECT(root)) { g_object_unref(parser); return; }
   auto* o = json_node_get_object(root); const std::string kind = string_member(o, "type");
   if (kind == "ready") {
-    std::cout << "Publishing " << app->room << ". Viewer: /watch/" << app->room << std::endl;
+    const std::string viewer_token = string_member(o, "viewerToken");
+    std::cout << "Publishing " << app->room << ". Viewer: /watch/" << app->room;
+    if (!viewer_token.empty()) std::cout << "#" << viewer_token;
+    std::cout << std::endl;
     if (gst_element_set_state(app->pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) stop(app, "Cannot start media pipeline");
   } else if (kind == "answer") {
     auto* desc = json_object_get_object_member(o, "sdp"); const gchar* sdp_text = string_member(desc, "sdp");
@@ -129,7 +133,9 @@ static void connected(GObject* source, GAsyncResult* result, gpointer data) {
   g_signal_connect(app->ws, "message", G_CALLBACK(incoming), app);
   g_signal_connect(app->ws, "closed", G_CALLBACK(+[](SoupWebsocketConnection*, gpointer d) {stop(static_cast<App*>(d), "Signaling connection closed");}), app);
   auto* o = message("publish"); json_object_set_int_member(o, "tracks", 2); json_object_set_string_member(o, "roomId", app->room.c_str());
-  json_object_set_string_member(o, "title", app->title.c_str()); send(app, o);
+  json_object_set_string_member(o, "title", app->title.c_str());
+  if (!app->token.empty()) json_object_set_string_member(o, "token", app->token.c_str());
+  send(app, o);
 }
 static gboolean bus_message(GstBus*, GstMessage* msg, gpointer data) {
   auto* app = static_cast<App*>(data);
@@ -142,6 +148,7 @@ static gboolean bus_message(GstBus*, GstMessage* msg, gpointer data) {
 }
 int main(int argc, char** argv) {
   gst_init(&argc, &argv); App app; bool camera = false; int width = 1280, height = 720, fps = 30, bitrate = 2500;
+  if (const char* token = std::getenv("STREAMFORGE_AUTH_SECRET")) app.token = token;
   try {
     for (int i = 1; i < argc; ++i) {
       std::string arg(argv[i]);
@@ -157,11 +164,13 @@ int main(int argc, char** argv) {
       else if (arg == "--bitrate") bitrate = std::stoi(value());
       else if (arg == "--stun") app.stun = value();
       else if (arg == "--turn") app.turn = value();
+      else if (arg == "--token") app.token = value();
       else if (arg == "--help") {
         std::cout << "StreamForge native H.264 + Opus WebRTC sender\n"
           "  --test (default) | --camera (webcam + microphone)\n"
           "  --url ws://127.0.0.1:8080/ws --room native-demo --title TEXT\n"
           "  --width 1280 --height 720 --fps 30 --bitrate 2500 (kbps)\n"
+          "  --token STREAMFORGE_AUTH_SECRET\n"
           "  --stun stun://host:3478 --turn turn://user:password@host:3478\n"; return 0;
       } else throw std::runtime_error("Unknown option " + arg);
     }

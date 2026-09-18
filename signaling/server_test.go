@@ -110,3 +110,77 @@ func TestHealthAndEmptyMetrics(t *testing.T) {
 		t.Fatal("missing metrics")
 	}
 }
+
+func TestProtectedRoomsRequirePublisherAndViewerTokens(t *testing.T) {
+	s, err := New(Config{AuthSecret: "operator-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := httptest.NewServer(s.Handler())
+	t.Cleanup(func() { s.Close(); h.Close() })
+
+	response, err := http.Get(h.URL + "/api/rooms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected protected room list, got %d", response.StatusCode)
+	}
+
+	unauthorized := dial(t, h.URL)
+	write(t, unauthorized, message{Type: "publish", RoomID: "secure-room"})
+	if v := read(t, unauthorized); v["type"] != "error" {
+		t.Fatalf("publisher without token was allowed: %v", v)
+	}
+
+	publisher := dial(t, h.URL)
+	write(t, publisher, message{Type: "publish", RoomID: "secure-room", Token: "operator-secret"})
+	ready := read(t, publisher)
+	viewerToken, ok := ready["viewerToken"].(string)
+	if ready["type"] != "ready" || !ok || viewerToken == "" {
+		t.Fatalf("missing signed viewer token: %v", ready)
+	}
+
+	viewer := dial(t, h.URL)
+	write(t, viewer, message{Type: "subscribe", RoomID: "secure-room"})
+	if v := read(t, viewer); v["type"] != "error" {
+		t.Fatalf("viewer without token was allowed: %v", v)
+	}
+}
+
+func TestSessionHistoryPersistsAcrossRestarts(t *testing.T) {
+	path := t.TempDir() + "/history.jsonl"
+	s, err := New(Config{HistoryPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := httptest.NewServer(s.Handler())
+	publisher := dial(t, h.URL)
+	write(t, publisher, message{Type: "publish", RoomID: "history-room", Title: "Recorded session"})
+	if v := read(t, publisher); v["type"] != "ready" {
+		t.Fatalf("unexpected response %v", v)
+	}
+	write(t, publisher, message{Type: "leave"})
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.RLock()
+		count := len(s.history)
+		s.mu.RUnlock()
+		if count > 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	h.Close()
+	s.Close()
+
+	restarted, err := New(Config{HistoryPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if len(restarted.history) != 1 || restarted.history[0].ID != "history-room" {
+		t.Fatalf("history was not restored: %+v", restarted.history)
+	}
+}

@@ -15,6 +15,10 @@ services:
       STUN_URL: ${STUN_URL:-}
       TURN_URL: ${TURN_URL:-}
       TURN_SECRET: ${TURN_SECRET:-}
+      STREAMFORGE_AUTH_SECRET: ${STREAMFORGE_AUTH_SECRET:-}
+      STREAMFORGE_HISTORY_PATH: /data/history.jsonl
+    volumes:
+      - streamforge-data:/data
     restart: unless-stopped
   prometheus:
     image: prom/prometheus:v3.2.1
@@ -54,3 +58,6 @@ services:
       - --external-ip=${RTC_PUBLIC_IP:-127.0.0.1}
       - --log-file=stdout
     restart: unless-stopped
+
+volumes:
+  streamforge-data:

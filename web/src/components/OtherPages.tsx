@@ -18,6 +18,7 @@ import {
   Users,
 } from "lucide-react";
 import type { Room } from "../lib/types";
+import { operatorHeaders, operatorToken, setOperatorToken } from "../lib/auth";
 import { Badge, Empty, Scene, StatusDot } from "./shared";
 export function useRooms() {
   const [rooms, setRooms] = useState<Room[]>([]),
@@ -27,7 +28,10 @@ export function useRooms() {
     const abort = new AbortController();
     const load = async () => {
       try {
-        const r = await fetch("/api/rooms", { signal: abort.signal });
+        const r = await fetch("/api/rooms", {
+          signal: abort.signal,
+          headers: operatorHeaders(),
+        });
         if (!r.ok) throw new Error("Signaling server is unavailable");
         setRooms(await r.json());
         setError("");
@@ -86,7 +90,7 @@ export function StreamsPage({ goStudio }: { goStudio: () => void }) {
             <a
               key={r.id}
               className="stream-card panel"
-              href={`/watch/${r.id}`}
+              href={`/watch/${r.id}${r.viewerToken ? `#${encodeURIComponent(r.viewerToken)}` : ""}`}
               target="_blank"
               rel="noreferrer"
             >
@@ -236,7 +240,7 @@ export function OperationsPage() {
                 </div>
                 <span>{r.viewers} viewers</span>
                 <a
-                  href={`/watch/${r.id}`}
+                  href={`/watch/${r.id}${r.viewerToken ? `#${encodeURIComponent(r.viewerToken)}` : ""}`}
                   target="_blank"
                   rel="noreferrer"
                   className="icon-button"
@@ -397,8 +401,11 @@ export function SettingsPage() {
       iceServers: RTCIceServer[];
       region: string;
       maxViewers: number;
+      authRequired: boolean;
+      historyEnabled: boolean;
     } | null>(null),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [token, setToken] = useState(operatorToken());
   useEffect(() => {
     const abort = new AbortController();
     fetch("/api/config", { signal: abort.signal })
@@ -420,7 +427,9 @@ export function SettingsPage() {
           <h1>Environment settings</h1>
           <p>Connection details for your local streaming environment.</p>
         </div>
-        <Badge>Read-only configuration</Badge>
+        <Badge tone={config?.authRequired ? "green" : "neutral"}>
+          {config?.authRequired ? "Access control enabled" : "Local open mode"}
+        </Badge>
       </div>
       {error && <div className="error-banner">{error}</div>}
       <div className="settings-grid">
@@ -439,6 +448,10 @@ export function SettingsPage() {
               ["Region", config?.region ?? "Loading…"],
               ["Viewer limit per stream", config?.maxViewers ?? "—"],
               [
+                "Persistent history",
+                config?.historyEnabled ? "Enabled" : "Disabled",
+              ],
+              [
                 "ICE servers",
                 config?.iceServers.length
                   ? config.iceServers
@@ -454,6 +467,38 @@ export function SettingsPage() {
                 <strong>{value}</strong>
               </div>
             ))}
+          </div>
+        </section>
+        <section className="panel">
+          <div className="panel-heading">
+            <h2>
+              <Settings2 size={16} />
+              Operator access
+            </h2>
+          </div>
+          <div className="settings-guide">
+            <p>
+              When server authentication is enabled, this token authorizes room
+              management and publishing for this browser session.
+            </p>
+            <label className="field-label" htmlFor="operator-token">
+              Operator token
+            </label>
+            <input
+              id="operator-token"
+              type="password"
+              autoComplete="off"
+              value={token}
+              placeholder="STREAMFORGE_AUTH_SECRET"
+              onChange={(event) => {
+                setToken(event.target.value);
+                setOperatorToken(event.target.value);
+              }}
+            />
+            <p>
+              The token stays in session storage and is cleared when the browser
+              session ends.
+            </p>
           </div>
         </section>
         <section className="panel">

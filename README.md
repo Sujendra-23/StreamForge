@@ -133,7 +133,8 @@ The native sender currently uses fixed x264 quality. The adaptive controller and
 
 - React/TypeScript Studio, live stream directory, viewer, Network Lab, operations, architecture, and settings.
 - Browser canvas/camera/screen capture, optional microphone, H.264/VP8 preference and browser AV1 when supported, remote playback, full screen, viewer links, CSV telemetry.
-- Go WebSocket publish/subscribe, SDP, trickle ICE, origin checks, room ownership, publisher teardown, bounded room/viewer capacity.
+- Go WebSocket publish/subscribe, SDP, trickle ICE, origin checks, optional operator authentication, signed viewer links, room ownership, publisher teardown, bounded room/viewer capacity.
+- Optional append-only completed-session history, restored across restarts; Docker Compose enables it with a named volume.
 - One-to-many RTP forwarding via Pion, DTLS-SRTP, NACK feedback, PLI keyframe requests, and audio/video tracks.
 - C++17 GStreamer H.264 + Opus publisher. Tested with synthetic audio/video.
 - Bounded per-room RTP impairment queue: bandwidth, added delay, jitter, and packet loss.
@@ -172,7 +173,7 @@ React and C++ ─── WebSocket SDP / ICE ─── Go signaling (same process
 
 ## Configuration and deployment
 
-The default local server listens on loopback and stores rooms in memory. It does not require a database or an account.
+The default local server listens on loopback and keeps active rooms in memory. Authentication and history are opt-in for a direct local process; Docker Compose enables persistent completed-session history in a named volume.
 
 | Setting | Purpose |
 |---|---|
@@ -183,6 +184,8 @@ The default local server listens on loopback and stores rooms in memory. It does
 | `TURN_URL`, `TURN_SECRET` | Optional TURN endpoint and shared secret for expiring credentials. |
 | `RTC_PUBLIC_IP` | Reachable IP advertised by the SFU when deployed behind NAT. |
 | `RTC_UDP_MIN`, `RTC_UDP_MAX` | Optional fixed media UDP port range. |
+| `STREAMFORGE_AUTH_SECRET` | Optional operator secret. When set, publishing and management APIs require it, and viewer links carry room-instance-specific signed capabilities. |
+| `STREAMFORGE_HISTORY_PATH` | Optional JSONL path for completed-session history; Compose sets `/data/history.jsonl`. |
 
 See [`.env.example`](.env.example). The local Go process reads **exported environment variables**; Docker Compose reads `.env` for interpolation. Do not commit real credentials.
 
@@ -211,6 +214,8 @@ Stop a conflicting local server before starting the container on port 8080. The 
 
 Camera/microphone access outside localhost requires HTTPS. Cross-network WebRTC also needs reachable ICE candidates or a working TURN relay; see [deployment instructions](docs/deployment.md) for ports, TLS, TURN, and the local development security model.
 
+For a protected local process, generate a long secret, export it as `STREAMFORGE_AUTH_SECRET`, and save the same value under **Settings → Operator access**. The browser keeps it in session storage. Publisher links receive a signed viewer capability; the secret itself is never placed in the viewer URL. Native publishers read the environment variable or accept `--token`.
+
 ## Previous test results
 
 These are **previously executed local results**, recorded on **September 17, 2026**, not claims that GitHub Actions has already passed. Environment: **macOS arm64, Node.js 26.8.1, Go 1.27.0, GStreamer 1.28.7, Playwright Chromium**.
@@ -220,10 +225,12 @@ These are **previously executed local results**, recorded on **September 17, 202
 | `npm run check` | **Passed** | TypeScript compilation and `go vet`. |
 | `npm run build` | **Passed** | Production React/Vite build. |
 | Vitest via `npm test` | **3 tests passed** | Immediate degradation; three healthy samples before recovery; quality ceiling; intermittent recovery; observed RTT/loss inputs. |
-| Go tests via `npm test` | **6 tests passed** | Network validation, viewer capacity/reclamation, packet accounting, room ownership/cleanup, origin rejection, and metrics. |
+| Go tests via `npm test` | **8 tests passed** | Network validation, viewer capacity/reclamation, packet accounting, room ownership/cleanup, origin rejection, metrics, protected publishing/viewing, and history restart persistence. |
 | `go test -race ./...` | **Passed** | Both tested Go packages passed with the race detector; the command entry point has no unit tests. |
 | `npm run test:e2e` | **3 passed, 1 intentionally skipped; 11.7 s** | Browser source to three viewers, actual RTP impairment, lower quality target, recovery, cleanup; synthetic camera/microphone tracks; mobile navigation/layout and offline viewer. The native test is skipped in this default run. |
 | `npm run test:native` | **1 passed; 4.0 s suite / 3.7 s test** | C++ H.264 + Opus through the SFU to **10 simultaneous viewers**. Each had 1280-pixel-wide video, one audio track, and **more than 20 decoded frames**. |
+| `SF_VIEWERS=50 SF_HOLD_SECONDS=10 npm run test:load` | **Passed; 20.1 s** | 50 concurrent browser viewers received native H.264 video and Opus audio; every viewer decoded more than 20 frames before the hold. |
+| `SF_VIEWERS=100 SF_HOLD_SECONDS=10 npm run test:load` | **Passed; 1.0 min** | Functional ceiling check: all 100 viewers connected with H.264 video and Opus audio. Sampled decoded frames were min **8**, median **179**, max **335**. This is connectivity evidence, not a real-time or sustained-load guarantee. |
 | `npm run test:a11y` | **0 violations across 6 pages** | axe WCAG 2 A/AA checks on idle desktop Studio, Network Lab, Live streams, Operations, Architecture, and Settings. |
 | Native CMake build | **Passed** | C++17 sender compiled and linked against GStreamer, libsoup, and JSON-GLib. |
 | H.264 decode smoke check | **Passed** | Generated 720p H.264 parsed and decoded through GStreamer to `fakesink`. |
@@ -231,7 +238,7 @@ These are **previously executed local results**, recorded on **September 17, 202
 
 The browser broadcast test uses the severe profile **2 Mbps / 120 ms added one-way delay / 30 ms jitter / 8% packet loss**, checks that the SFU's actual dropped-packet counter increases, verifies a **720p target**, restores healthy conditions, and checks quality recovery. The native test verifies video decoding and audio-track presence; it is not a subjective audio listening test.
 
-Camera/microphone tests used Chromium's **synthetic devices**, not the physical webcam/microphone. Ten-viewer testing is a short functional test, not a sustained performance/load guarantee. Accessibility results apply to the scanned states and are not a full accessibility certification. Timing can vary by machine and load.
+Camera/microphone tests used Chromium's **synthetic devices**, not the physical webcam/microphone. The 50/100-viewer checks are short functional tests, not sustained performance guarantees; the 100-viewer minimum frame count shows meaningful local resource contention. Accessibility results apply to the scanned states and are not a full accessibility certification. Timing can vary by machine and load.
 
 Test sources: [`tests/streaming.spec.ts`](tests/streaming.spec.ts), [`tests/native.spec.ts`](tests/native.spec.ts), [`web/src/lib/adaptive.test.ts`](web/src/lib/adaptive.test.ts), [`sfu/room_test.go`](sfu/room_test.go), [`signaling/server_test.go`](signaling/server_test.go). See [validation notes](docs/validation.md) for untested scenarios.
 
@@ -275,19 +282,20 @@ npm run test:e2e          # Real browser streaming, loss/recovery, capture, resp
 npm run test:a11y         # Six-page axe scan (requires npm run dev)
 npm run build:native
 npm run test:native       # C++ H.264/Opus to TEN Chromium viewers
+npm run test:load         # Defaults to 50 viewers; configurable with SF_VIEWERS/SF_HOLD_SECONDS
 python3 benchmarks/encode.py --frames 300
 ```
 
-`npm run test:native` requires a native build. It launches a temporary native publisher and verifies H.264 dimensions, an audio track, and at least 20 decoded video frames for each of ten viewers. Tests release their rooms afterward.
+`npm run test:native` and `npm run test:load` require a native build. The native test launches a temporary publisher and verifies H.264 dimensions, an audio track, and at least 20 decoded video frames for every viewer. The load profile defaults to 50 viewers; use `SF_VIEWERS=100 SF_HOLD_SECONDS=300 npm run test:load` for a five-minute 100-viewer run. Tests release their rooms afterward.
 
 ## Limitations and roadmap
 
-- **Local MVP:** one Go signaling/SFU process, in-memory rooms, no user accounts, persistent history, or public multi-tenant authorization. Origin checks are not a substitute for authentication.
+- **Access and persistence:** active rooms still live in one Go process. Optional operator authentication, signed room-instance viewer links, protected management APIs, and persistent completed-session JSONL history are implemented. This is capability-based access, not user accounts, tenant roles, or a replicated database.
 - **Forwarding implementation:** the current SFU is Go/Pion; a C++ SFU from the original roadmap is deferred. Native capture and encoding are C++.
 - **Adaptation:** one shared upstream quality level; there is no simulcast/per-viewer layer selection. A constrained viewer can affect everybody. Native x264 quality is fixed for the process lifetime.
 - **Impairment:** the built-in lab operates on RTP before fan-out, not on the entire operating-system network. The optional Linux netem script was not exercised here.
 - **Connectivity:** same-machine transport was tested; different-network STUN/TURN traversal was not. Deployment configuration does not constitute a production deployment.
-- **Not yet measured:** sustained 50/100-viewer load, real-device capture, end-to-end glass-to-glass latency, hardware GPU usage/encoding, inference overhead, or AV1 quality comparisons.
+- **Not yet measured:** sustained 50/100-viewer soak performance, real-device capture, end-to-end glass-to-glass latency, hardware GPU usage/encoding, inference overhead, or AV1 quality comparisons. Short 50- and 100-viewer functional runs are recorded above; they do not establish steady frame rate or production capacity.
 - **Future stages:** NVIDIA encoding/decoding, controlled AV1 benchmarking, Kafka/Redis/PostgreSQL, Airflow batch analytics, TensorRT object detection, LL-HLS broadcast, and regional scheduling/failover.
 
 See [deployment](docs/deployment.md), [signaling protocol](docs/protocol.md), [validation](docs/validation.md), and [remaining roadmap](docs/roadmap.md).
