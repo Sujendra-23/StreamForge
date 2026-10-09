@@ -75,6 +75,7 @@ type packet struct {
 }
 type Room struct {
 	ExpectedTracks   int
+	Collab           *Collab // presence and the shared note
 	publisherQoE     QoE
 	viewerQoE        map[string]QoE
 	ID, Title        string
@@ -95,7 +96,7 @@ type Room struct {
 }
 
 func NewRoom(id, title string, publisher *webrtc.PeerConnection) *Room {
-	r := &Room{ExpectedTracks: 1, viewerQoE: make(map[string]QoE), ID: id, Title: title, StartedAt: time.Now().UTC(), Publisher: publisher, network: HealthyNetwork, done: make(chan struct{}), queue: make(chan packet, 256)}
+	r := &Room{ExpectedTracks: 1, Collab: NewCollab(), viewerQoE: make(map[string]QoE), ID: id, Title: title, StartedAt: time.Now().UTC(), Publisher: publisher, network: HealthyNetwork, done: make(chan struct{}), queue: make(chan packet, 256)}
 	go r.forward()
 	return r
 }

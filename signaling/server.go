@@ -64,6 +64,10 @@ type message struct {
 	Network   *sfu.Network               `json:"network,omitempty"`
 	Error     string                     `json:"error,omitempty"`
 	Token     string                     `json:"token,omitempty"`
+	// Presence and shared note (see docs/protocol.md).
+	Name        string  `json:"name,omitempty"`
+	Text        *string `json:"text,omitempty"`
+	BaseVersion *uint64 `json:"baseVersion,omitempty"`
 }
 
 var validID = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,48}$`)
@@ -407,7 +411,26 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 			cancel()
 		}
 	})
-	ready := map[string]any{"type": "ready", "roomId": room.ID, "role": first.Type}
+	idBytes := make([]byte, 8)
+	_, _ = rand.Read(idBytes)
+	participantID := hex.EncodeToString(idBytes)
+	role, name := "viewer", sfu.CleanName(first.Name)
+	if publisher {
+		role = "publisher"
+	}
+	if name == "" {
+		name = "Viewer " + participantID[:4]
+		if publisher {
+			name = "Host"
+		}
+	}
+	leaveRoom, err := room.Collab.Join(sfu.Participant{ID: participantID, Name: name, Role: role})
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	defer leaveRoom()
+	ready := map[string]any{"type": "ready", "roomId": room.ID, "role": first.Type, "participantId": participantID}
 	if publisher && s.config.AuthSecret != "" {
 		ready["viewerToken"] = s.viewerToken(room.ID, room.StartedAt)
 	}
@@ -430,6 +453,37 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 					cancel()
 					return
 				}
+			}
+		}
+	}()
+	go func() {
+		changed, unsubscribe := room.Collab.Subscribe()
+		defer unsubscribe()
+		var sentPresence, sentNote uint64
+		noteSent := false // forces the initial note, even while it is still empty
+		for {
+			presence := room.Collab.Presence()
+			note := room.Collab.Note()
+			if presence.Version != sentPresence {
+				sentPresence = presence.Version
+				if send(map[string]any{"type": "presence", "version": presence.Version, "participants": presence.Participants}) != nil {
+					cancel()
+					return
+				}
+			}
+			if !noteSent || sentNote != note.Version {
+				sentNote, noteSent = note.Version, true
+				if send(map[string]any{"type": "note", "note": note}) != nil {
+					cancel()
+					return
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-room.Done():
+				return
+			case <-changed:
 			}
 		}
 	}()
@@ -508,6 +562,21 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		case "telemetry":
 			if msg.Metrics != nil {
 				room.UpdateQoE(viewerID, *msg.Metrics)
+			}
+		case "note":
+			if msg.Text == nil {
+				fail("Missing note text")
+				continue
+			}
+			note, overwrote, e := room.Collab.SetNote(participantID, *msg.Text, msg.BaseVersion)
+			if e != nil {
+				fail(e.Error())
+				continue
+			}
+			_ = send(map[string]any{"type": "note_ack", "version": note.Version, "overwrote": overwrote})
+		case "rename":
+			if e := room.Collab.Rename(participantID, msg.Name); e != nil {
+				fail(e.Error())
 			}
 		case "leave":
 			return

@@ -10,6 +10,8 @@ import {
   VolumeX,
 } from "lucide-react";
 import { StreamConnection } from "../lib/rtc";
+import { savedName, useRoomCollab } from "../hooks/useRoomCollab";
+import { RoomPanel } from "./RoomPanel";
 import { EMPTY_METRICS, type Room } from "../lib/types";
 import { Badge, Empty, Logo, StatusDot, Video } from "./shared";
 export function Viewer({ id }: { id: string }) {
@@ -21,12 +23,16 @@ export function Viewer({ id }: { id: string }) {
     [muted, setMuted] = useState(true),
     [attempt, setAttempt] = useState(0);
   const container = useRef<HTMLDivElement>(null);
+  const collab = useRoomCollab();
+  const { callbacks: collabCallbacks, attach, reset } = collab;
   useEffect(() => {
     let disposed = false;
     setState("connecting");
     setError("");
     setStream(null);
+    reset();
     const conn = new StreamConnection({
+      ...collabCallbacks,
       onState: setState,
       onRoom: setRoom,
       onError: (e) => {
@@ -36,12 +42,15 @@ export function Viewer({ id }: { id: string }) {
       onTrack: setStream,
     });
     const token = decodeURIComponent(location.hash.slice(1));
-    conn.connect("subscribe", id, "", undefined, "H264", token).catch((e) => {
-      if (!disposed) {
-        setError(e.message);
-        setState("failed");
-      }
-    });
+    attach(conn);
+    conn
+      .connect("subscribe", id, "", undefined, "H264", token, savedName())
+      .catch((e) => {
+        if (!disposed) {
+          setError(e.message);
+          setState("failed");
+        }
+      });
     let reading = false;
     const t = setInterval(async () => {
       if (reading) return;
@@ -162,6 +171,11 @@ export function Viewer({ id }: { id: string }) {
           <span>{metrics.decodeMs.toFixed(1)} ms decode</span>
           <Badge>Local SFU</Badge>
         </div>
+        {live && (
+          <div className="viewer-collab">
+            <RoomPanel collab={collab} />
+          </div>
+        )}
         <div className="viewer-description">
           <h3>Live, with nothing in the way.</h3>
           <p>
