@@ -28,6 +28,7 @@ import { useRef, useState } from "react";
 import type { Studio } from "../hooks/useStudio";
 import { QUALITY_LEVELS } from "../lib/adaptive";
 import type { Page, Source } from "../lib/types";
+import { RoomPanel } from "./RoomPanel";
 import {
   Badge,
   HealthCheck,
@@ -504,6 +505,7 @@ export function StudioPage({
               )}
             </div>
           </section>
+          {s.live && <RoomPanel collab={s.collab} />}
           <div className="studio-note">
             <span>
               <Radio size={15} />

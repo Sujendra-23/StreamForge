@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StreamConnection } from "../lib/rtc";
+import { savedName, useRoomCollab } from "./useRoomCollab";
 import { createDemoStream } from "../lib/demo";
 import { AdaptiveController, QUALITY_LEVELS } from "../lib/adaptive";
 import {
@@ -32,6 +33,7 @@ export function useStudio() {
     [quality, setQuality] = useState<Quality>(QUALITY_LEVELS[2]);
   const [error, setError] = useState(""),
     [events, setEvents] = useState<Event[]>([]);
+  const collab = useRoomCollab();
   const connection = useRef<StreamConnection | null>(null),
     cleanup = useRef<(() => void) | null>(null),
     controller = useRef(new AdaptiveController()),
@@ -60,6 +62,7 @@ export function useStudio() {
     connection.current = null;
     cleanup.current?.();
     cleanup.current = null;
+    collab.reset();
     setStream(null);
     busy.current = false;
   }, []);
@@ -146,6 +149,7 @@ export function useStudio() {
       controller.current = new AdaptiveController(ceiling);
       setQuality(q);
       const conn = new StreamConnection({
+        ...collab.callbacks,
         onState: (s) => {
           if (version !== session.current) return;
           setStatus(s);
@@ -187,12 +191,15 @@ export function useStudio() {
         },
       });
       connection.current = conn;
+      collab.attach(conn);
       await conn.connect(
         "publish",
         crypto.randomUUID().slice(0, 8),
         title,
         media,
         codec,
+        "",
+        savedName(),
       );
     } catch (e) {
       if (version !== session.current) return;
@@ -307,6 +314,7 @@ export function useStudio() {
     stop,
     applyNetwork,
     toggleMute,
+    collab,
     live: status === "connected",
     busy: status === "connecting" || status === "new",
   };

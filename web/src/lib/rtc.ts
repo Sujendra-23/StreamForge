@@ -1,5 +1,6 @@
 import { EMPTY_METRICS, type Metrics, type Network, type Room } from "./types";
 import { operatorToken } from "./auth";
+import type { Presence, SharedNote } from "./collab";
 export type Callbacks = {
   onState: (state: string) => void;
   onRoom: (room: Room) => void;
@@ -7,6 +8,11 @@ export type Callbacks = {
   onTrack?: (stream: MediaStream) => void;
   onReady?: (id: string, viewerToken: string) => void;
   onNetwork?: (network: Network) => void;
+  /** Presence and shared note (see docs/protocol.md). */
+  onSelf?: (participantId: string) => void;
+  onPresence?: (presence: Presence) => void;
+  onNote?: (note: SharedNote) => void;
+  onNoteAck?: (version: number, overwrote: boolean) => void;
 };
 export class StreamConnection {
   pc: RTCPeerConnection | null = null;
@@ -35,6 +41,7 @@ export class StreamConnection {
     stream?: MediaStream,
     codec = "H264",
     accessToken = "",
+    displayName = "",
   ) {
     const res = await fetch("/api/config", {
       signal: AbortSignal.timeout(10000),
@@ -104,6 +111,7 @@ export class StreamConnection {
         title,
         tracks: stream?.getTracks().length ?? 0,
         token,
+        name: displayName,
       });
     ws.onerror = () =>
       this.callbacks.onError(
@@ -124,6 +132,7 @@ export class StreamConnection {
           switch (msg.type) {
             case "ready":
               this.callbacks.onReady?.(msg.roomId, msg.viewerToken ?? "");
+              this.callbacks.onSelf?.(msg.participantId ?? "");
               await pc.setLocalDescription(await pc.createOffer());
               this.send({ type: "offer", sdp: pc.localDescription });
               break;
@@ -142,6 +151,18 @@ export class StreamConnection {
             case "network":
               this.callbacks.onNetwork?.(msg.network);
               break;
+            case "presence":
+              this.callbacks.onPresence?.({
+                version: msg.version,
+                participants: msg.participants ?? [],
+              });
+              break;
+            case "note":
+              this.callbacks.onNote?.(msg.note);
+              break;
+            case "note_ack":
+              this.callbacks.onNoteAck?.(msg.version, !!msg.overwrote);
+              break;
             case "error":
               this.callbacks.onError(msg.error);
               break;
@@ -159,6 +180,13 @@ export class StreamConnection {
   send(data: unknown) {
     if (this.ws?.readyState === WebSocket.OPEN)
       this.ws.send(JSON.stringify(data));
+  }
+  /** Saves the shared note. Last writer wins; baseVersion lets the server say if this replaced a newer note. */
+  saveNote(text: string, baseVersion: number) {
+    this.send({ type: "note", text, baseVersion });
+  }
+  rename(name: string) {
+    this.send({ type: "rename", name });
   }
   setNetwork(network: Network) {
     this.send({ type: "network", network });

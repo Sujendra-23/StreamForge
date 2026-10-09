@@ -28,6 +28,7 @@ The centerpiece is a real network-degradation experiment: start a stream, open v
 |---|---|
 | **Studio** | Choose a test source, camera, or screen; configure codec and quality; enable microphone capture; start/stop a broadcast; copy a viewer link; inspect and export measured telemetry. |
 | **Viewer** | Watch live WebRTC video/audio, unmute, enter full screen, inspect receive-side statistics, and reconnect after a disconnect. |
+| **Room panel** (Studio and Viewer, while live) | See who is in the room as people join, leave or rename, and edit one shared note (last save wins, version counter, warning when someone else saved while you were editing). |
 | **Live streams** | Discover active local broadcasts and open their viewers. |
 | **Network Lab** | Apply actual SFU packet loss, delay, jitter, and bandwidth constraints; observe adaptive quality changes; restore healthy conditions. |
 | **Operations** | See active streams, viewer counts, received media, impaired packets, node status, and the Prometheus endpoint. |
@@ -275,10 +276,10 @@ The runner writes `.h264` outputs and a JSON report under the ignored `benchmark
 ```bash
 npm run check             # TypeScript + go vet
 npm run build             # Production frontend
-npm test                  # Adaptive controller + Go tests
-go test -race ./...      # Room lifecycle, validation, packet accounting, races
+npm test                  # Adaptive controller, room-panel logic + Go tests
+go test -race ./...      # Room lifecycle, validation, packet accounting, presence and shared-note races
 npx playwright install chromium
-npm run test:e2e          # Real browser streaming, loss/recovery, capture, responsive UI
+npm run test:e2e          # Real browser streaming, loss/recovery, capture, responsive UI, host+viewer presence and shared note (with an axe scan)
 npm run test:a11y         # Six-page axe scan (requires npm run dev)
 npm run build:native
 npm run test:native       # C++ H.264/Opus to TEN Chromium viewers
